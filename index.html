@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Free Time Picker</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main class="wrap">
+      <header>
+        <h1>Free Time Picker</h1>
+        <p class="sub">Bored? Get one thing to do. Then say if it was time well spent.</p>
+      </header>
+
+      <section class="card" id="card" aria-live="polite"></section>
+
+      <section class="stats" aria-label="Your progress">
+        <div class="stat">
+          <span class="stat-label">Time well spent (last 7 days)</span>
+          <span class="stat-value" id="stat-lagging">–</span>
+          <span class="stat-note" id="stat-lagging-note"></span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Picked within 5 minutes</span>
+          <span class="stat-value" id="stat-leading">–</span>
+          <span class="stat-note" id="stat-leading-note"></span>
+        </div>
+      </section>
+
+      <footer>
+        <button type="button" class="link" id="clear">Clear my history</button>
+        <span>Data stays in this browser. Suggestions from the Bored API.</span>
+      </footer>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
