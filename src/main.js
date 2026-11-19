@@ -45,10 +45,20 @@ function safeLink(url) {
 }
 
 // ---- API ----
+// FreeToGame returns the whole catalogue of free browser games (~70) in one call,
+// so we fetch it once and pick randomly on the client.
+const API = 'https://www.freetogame.com/api/games?platform=browser';
+let games = null;
+
 async function fetchSuggestion() {
-  const res = await fetch('/api/random');
-  if (!res.ok) throw new Error(res.status === 429 ? 'Too many requests, wait a minute.' : `API error ${res.status}`);
-  return res.json();
+  if (!games) {
+    const res = await fetch(API);
+    if (!res.ok) throw new Error(res.status === 429 ? 'Too many requests, wait a minute.' : `API error ${res.status}`);
+    games = await res.json();
+  }
+  if (!Array.isArray(games) || !games.length) { games = null; throw new Error('No games came back from the API.'); }
+  const g = games[Math.floor(Math.random() * games.length)];
+  return { activity: g.title, type: g.genre, description: g.short_description, link: g.game_url };
 }
 
 async function next() {
@@ -102,9 +112,10 @@ function render() {
       <div class="row"><button class="solid" id="retry">Try again</button></div>`;
     $('#retry').onclick = next;
   } else if (phase === 'suggest') {
-    const bits = [suggestion.type, suggestion.duration, suggestion.participants > 1 ? `${suggestion.participants} people` : 'solo'];
+    const bits = [suggestion.type, 'free browser game'];
     card.innerHTML = `<p class="tag">Try this</p><p class="activity">${esc(suggestion.activity)}</p>
-      <p class="meta">${esc(bits.filter(Boolean).join(' · '))}${safeLink(suggestion.link) ? ` · <a href="${esc(safeLink(suggestion.link))}" target="_blank" rel="noopener noreferrer">link</a>` : ''}</p>
+      <p>${esc(suggestion.description || '')}</p>
+      <p class="meta">${esc(bits.filter(Boolean).join(' · '))}${safeLink(suggestion.link) ? ` · <a href="${esc(safeLink(suggestion.link))}" target="_blank" rel="noopener noreferrer">play</a>` : ''}</p>
       <div class="row"><button class="solid" id="do">Do it</button><button id="another">Another</button></div>`;
     $('#do').onclick = doIt; $('#another').onclick = next;
   } else if (phase === 'doing') {
