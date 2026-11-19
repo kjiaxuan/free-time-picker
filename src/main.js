@@ -50,17 +50,18 @@ function safeLink(url) {
 // ---- API ----
 // Two sources, switchable with the toggle:
 // - games: FreeToGame (~70 free browser games in one call, fetched once, picked at random).
-// - activities: Bored API (general things to do). It sends no CORS headers, so it is only
-//   reachable through the Vite dev-server proxy (/api) and is disabled in the production build.
+// - activities: the Bored API's general things to do. It sends no CORS headers, so the browser
+//   can't call it. scripts/fetch-activities.mjs downloads it at build time into
+//   public/activities.json, and the app reads that static file.
 const MODE_KEY = 'ftp.mode.v1';
-const ACTIVITIES_AVAILABLE = import.meta.env.DEV;
 const GAMES_API = 'https://www.freetogame.com/api/games?platform=browser';
+const ACTIVITIES_URL = `${import.meta.env.BASE_URL}activities.json`;
 let games = null;
+let activities = null;
 
 function loadMode() {
   try {
-    const m = localStorage.getItem(MODE_KEY);
-    if (m === 'activities' && ACTIVITIES_AVAILABLE) return 'activities';
+    if (localStorage.getItem(MODE_KEY) === 'activities') return 'activities';
   } catch { /* ignore */ }
   return 'games';
 }
@@ -74,7 +75,9 @@ async function getJson(url) {
 
 async function fetchSuggestion() {
   if (mode === 'activities') {
-    const a = await getJson('/api/random');
+    if (!activities) activities = await getJson(ACTIVITIES_URL);
+    if (!Array.isArray(activities) || !activities.length) { activities = null; throw new Error('No activities found.'); }
+    const a = activities[Math.floor(Math.random() * activities.length)];
     const who = a.participants > 1 ? `${a.participants} people` : 'solo';
     return { activity: a.activity, type: a.type, description: '', link: a.link, meta: [a.type, a.duration, who] };
   }
@@ -85,7 +88,7 @@ async function fetchSuggestion() {
 }
 
 function setMode(m) {
-  if (m === mode || (m === 'activities' && !ACTIVITIES_AVAILABLE)) return;
+  if (m === mode) return;
   mode = m;
   try { localStorage.setItem(MODE_KEY, m); } catch { /* ignore */ }
   if (phase === 'suggest' || phase === 'error') next();
@@ -95,10 +98,8 @@ function setMode(m) {
 function renderMode() {
   const locked = phase === 'loading' || phase === 'doing' || phase === 'rate';
   document.querySelectorAll('#mode button').forEach((b) => {
-    const m = b.dataset.mode;
-    b.setAttribute('aria-pressed', String(m === mode));
-    b.disabled = locked || (m === 'activities' && !ACTIVITIES_AVAILABLE);
-    if (m === 'activities' && !ACTIVITIES_AVAILABLE) b.title = 'Only available when running locally (npm run dev)';
+    b.setAttribute('aria-pressed', String(b.dataset.mode === mode));
+    b.disabled = locked;
   });
 }
 document.querySelectorAll('#mode button').forEach((b) => (b.onclick = () => setMode(b.dataset.mode)));

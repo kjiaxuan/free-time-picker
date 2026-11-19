@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * 1' # weekly, Mondays 03:00 UTC: refresh the activity list
 
 permissions:
   contents: read
@@ -24,6 +26,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Refresh the Bored API snapshot. If the API is down, keep the committed file.
+      - run: npm run fetch-activities || echo "Using the committed activities.json"
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:
