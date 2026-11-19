@@ -127,13 +127,17 @@ async function next() {
 }
 
 // ---- going back ----
-function back() { // previous suggestion
-  if (!history.length) return;
-  suggestion = history.pop();
-  if (suggestion.source && suggestion.source !== mode) {
+// Make the toggle match the suggestion being shown.
+function syncMode() {
+  if (suggestion && suggestion.source && suggestion.source !== mode) {
     mode = suggestion.source;
     try { localStorage.setItem(MODE_KEY, mode); } catch { /* ignore */ }
   }
+}
+function back() { // previous suggestion
+  if (!history.length) return;
+  suggestion = history.pop();
+  syncMode();
   phase = 'suggest'; render();
 }
 function unpick() { // from "in progress" back to the suggestion
@@ -145,11 +149,11 @@ function unpick() { // from "in progress" back to the suggestion
 function unfinish() { phase = 'doing'; render(); } // from rating back to "in progress"
 function undoRating() { // take back the rating that was just saved
   if (!lastRated) return;
-  const entry = lastRated; lastRated = null;
+  const { entry, suggestion: pickedSuggestion } = lastRated; lastRated = null;
   saveFailed = !save(load().filter((s) => s.id !== entry.id));
   const { rating, ratedAt, ...rest } = entry;
-  slot = rest;
-  suggestion = slot.suggestion || null;
+  slot = { ...rest, suggestion: pickedSuggestion };
+  suggestion = pickedSuggestion || null;
   saveCurrent();
   phase = 'rate'; render(); renderStats();
 }
@@ -167,10 +171,13 @@ function doIt() {
 function finish() { phase = 'rate'; render(); }
 function rate(r) {
   const slots = load();
-  const entry = { ...slot, rating: r, ratedAt: Date.now() };
+  // The full suggestion is only needed while a slot is open (and for Undo), so keep it
+  // out of the permanent history.
+  const { suggestion: pickedSuggestion, ...stored } = slot;
+  const entry = { ...stored, rating: r, ratedAt: Date.now() };
   slots.push(entry);
   saveFailed = !save(slots);
-  lastRated = entry;
+  lastRated = { entry, suggestion: pickedSuggestion };
   slot = null; suggestion = null; history = []; phase = 'idle';
   saveCurrent();
   render(); renderStats();
@@ -183,7 +190,7 @@ function render() {
   if (phase === 'idle') {
     card.innerHTML = `<p class="tag">Free time</p><p class="activity">Got a free slot?</p>
       <div class="row"><button class="solid" id="start">Give me something to do</button></div>
-      ${lastRated ? `<p class="meta">Rated "${esc(lastRated.activity)}". <button type="button" class="link" id="undo">Undo</button></p>` : ''}`;
+      ${lastRated ? `<p class="meta">Rated "${esc(lastRated.entry.activity)}".<button type="button" class="link" id="undo">Undo</button></p>` : ''}`;
     $('#start').onclick = next;
     if (lastRated) $('#undo').onclick = undoRating;
   } else if (phase === 'loading') {
@@ -192,10 +199,10 @@ function render() {
     card.innerHTML = `<p class="tag">Problem</p><p class="activity error">${esc(errorMsg)}</p>
       <div class="row"><button class="solid" id="retry">Try again</button>${history.length || suggestion ? '<button id="back">Back</button>' : ''}</div>`;
     $('#retry').onclick = next;
-    if ($('#back')) $('#back').onclick = () => { if (suggestion) { phase = 'suggest'; render(); } else back(); };
+    if ($('#back')) $('#back').onclick = () => { if (suggestion) { syncMode(); phase = 'suggest'; render(); } else back(); };
   } else if (phase === 'suggest') {
     const bits = suggestion.meta || [suggestion.type];
-    const linkLabel = mode === 'games' ? 'play' : 'link';
+    const linkLabel = (suggestion.source || mode) === 'games' ? 'play' : 'link';
     card.innerHTML = `<p class="tag">Try this</p><p class="activity">${esc(suggestion.activity)}</p>
       ${suggestion.description ? `<p>${esc(suggestion.description)}</p>` : ''}
       <p class="meta">${esc(bits.filter(Boolean).join(' · '))}${safeLink(suggestion.link) ? ` · <a href="${esc(safeLink(suggestion.link))}" target="_blank" rel="noopener noreferrer">${linkLabel}</a>` : ''}</p>
@@ -249,6 +256,8 @@ function renderStats() {
 $('#clear').onclick = () => {
   if (confirm('Delete all your saved history in this browser?')) {
     try { localStorage.removeItem(KEY); } catch { /* ignore */ }
+    lastRated = null; // nothing left to undo
+    if (phase === 'idle') render();
     renderStats();
   }
 };

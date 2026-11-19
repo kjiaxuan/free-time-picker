@@ -27,7 +27,7 @@ jobs:
           cache: npm
       - run: npm ci
       # Refresh the Bored API snapshot. If the API is down, keep the committed file.
-      - run: npm run fetch-activities || echo "Using the committed activities.json"
+      - run: npm run fetch-activities || echo "::warning title=Activity refresh failed::Deploying the committed activities.json instead. Check the Bored API."
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:
