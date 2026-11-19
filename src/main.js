@@ -35,6 +35,9 @@ let suggestion = null;
 let phase = 'idle';   // idle | loading | suggest | doing | rate | error
 let saveFailed = false;
 let interacted = false;
+let history = [];     // suggestions already seen in this slot, for "Back"
+let lastRated = null; // the most recently saved slot, for "Undo"
+let errorMsg = '';
 
 // Only allow http(s) links from the API; anything else (e.g. javascript:) is dropped.
 function safeLink(url) {
@@ -85,7 +88,6 @@ function setMode(m) {
   if (m === mode || (m === 'activities' && !ACTIVITIES_AVAILABLE)) return;
   mode = m;
   try { localStorage.setItem(MODE_KEY, m); } catch { /* ignore */ }
-  suggestion = null; // so the dedupe check does not compare across sources
   if (phase === 'suggest' || phase === 'error') next();
   else renderMode();
 }
@@ -103,20 +105,52 @@ document.querySelectorAll('#mode button').forEach((b) => (b.onclick = () => setM
 
 async function next() {
   if (phase === 'loading') return; // ignore overlapping requests
-  const previous = suggestion && suggestion.activity;
+  // Only compare against the current suggestion if it came from the same source.
+  const previous = suggestion && suggestion.source === mode ? suggestion.activity : null;
   phase = 'loading'; render();
   try {
     let s = await fetchSuggestion();
     // "Another" should look different: retry a few times if the API repeats itself.
     for (let i = 0; i < 3 && previous && s.activity === previous; i++) s = await fetchSuggestion();
+    s.source = mode;
+    if (suggestion) history.push(suggestion); // keep it so "Back" can return to it
     suggestion = s;
+    lastRated = null;
     if (!slot) slot = { id: Date.now(), openedAt: Date.now() };
     phase = 'suggest';
   } catch (e) {
     phase = 'error';
-    suggestion = { error: e.message || 'Could not reach the API.' };
+    errorMsg = e.message || 'Could not reach the API.';
   }
   render();
+}
+
+// ---- going back ----
+function back() { // previous suggestion
+  if (!history.length) return;
+  suggestion = history.pop();
+  if (suggestion.source && suggestion.source !== mode) {
+    mode = suggestion.source;
+    try { localStorage.setItem(MODE_KEY, mode); } catch { /* ignore */ }
+  }
+  phase = 'suggest'; render();
+}
+function unpick() { // from "in progress" back to the suggestion
+  suggestion = slot.suggestion || { activity: slot.activity, type: slot.type, meta: [slot.type], source: slot.source || mode };
+  delete slot.pickedAt; delete slot.activity; delete slot.type; delete slot.source; delete slot.suggestion;
+  saveCurrent();
+  phase = 'suggest'; render();
+}
+function unfinish() { phase = 'doing'; render(); } // from rating back to "in progress"
+function undoRating() { // take back the rating that was just saved
+  if (!lastRated) return;
+  const entry = lastRated; lastRated = null;
+  saveFailed = !save(load().filter((s) => s.id !== entry.id));
+  const { rating, ratedAt, ...rest } = entry;
+  slot = rest;
+  suggestion = slot.suggestion || null;
+  saveCurrent();
+  phase = 'rate'; render(); renderStats();
 }
 
 // ---- actions ----
@@ -124,16 +158,19 @@ function doIt() {
   slot.pickedAt = Date.now();
   slot.activity = suggestion.activity;
   slot.type = suggestion.type;
-  slot.source = mode;
+  slot.source = suggestion.source || mode;
+  slot.suggestion = suggestion; // so we can go back to it, even after a reload
   saveCurrent();
   phase = 'doing'; render();
 }
 function finish() { phase = 'rate'; render(); }
 function rate(r) {
   const slots = load();
-  slots.push({ ...slot, rating: r, ratedAt: Date.now() });
+  const entry = { ...slot, rating: r, ratedAt: Date.now() };
+  slots.push(entry);
   saveFailed = !save(slots);
-  slot = null; suggestion = null; phase = 'idle';
+  lastRated = entry;
+  slot = null; suggestion = null; history = []; phase = 'idle';
   saveCurrent();
   render(); renderStats();
 }
@@ -144,33 +181,39 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 function render() {
   if (phase === 'idle') {
     card.innerHTML = `<p class="tag">Free time</p><p class="activity">Got a free slot?</p>
-      <div class="row"><button class="solid" id="start">Give me something to do</button></div>`;
+      <div class="row"><button class="solid" id="start">Give me something to do</button></div>
+      ${lastRated ? `<p class="meta">Rated "${esc(lastRated.activity)}". <button type="button" class="link" id="undo">Undo</button></p>` : ''}`;
     $('#start').onclick = next;
+    if (lastRated) $('#undo').onclick = undoRating;
   } else if (phase === 'loading') {
     card.innerHTML = `<p class="tag">Finding something</p><p class="activity">…</p>`;
   } else if (phase === 'error') {
-    card.innerHTML = `<p class="tag">Problem</p><p class="activity error">${esc(suggestion.error)}</p>
-      <div class="row"><button class="solid" id="retry">Try again</button></div>`;
+    card.innerHTML = `<p class="tag">Problem</p><p class="activity error">${esc(errorMsg)}</p>
+      <div class="row"><button class="solid" id="retry">Try again</button>${history.length || suggestion ? '<button id="back">Back</button>' : ''}</div>`;
     $('#retry').onclick = next;
+    if ($('#back')) $('#back').onclick = () => { if (suggestion) { phase = 'suggest'; render(); } else back(); };
   } else if (phase === 'suggest') {
     const bits = suggestion.meta || [suggestion.type];
     const linkLabel = mode === 'games' ? 'play' : 'link';
     card.innerHTML = `<p class="tag">Try this</p><p class="activity">${esc(suggestion.activity)}</p>
       ${suggestion.description ? `<p>${esc(suggestion.description)}</p>` : ''}
       <p class="meta">${esc(bits.filter(Boolean).join(' · '))}${safeLink(suggestion.link) ? ` · <a href="${esc(safeLink(suggestion.link))}" target="_blank" rel="noopener noreferrer">${linkLabel}</a>` : ''}</p>
-      <div class="row"><button class="solid" id="do">Do it</button><button id="another">Another</button></div>`;
+      <div class="row"><button class="solid" id="do">Do it</button><button id="another">Another</button>${history.length ? '<button id="back">← Previous</button>' : ''}</div>`;
     $('#do').onclick = doIt; $('#another').onclick = next;
+    if (history.length) $('#back').onclick = back;
   } else if (phase === 'doing') {
     card.innerHTML = `<p class="tag">In progress</p><p class="activity">${esc(slot.activity)}</p>
-      <div class="row"><button class="solid" id="done">I'm done</button></div>`;
-    $('#done').onclick = finish;
+      <div class="row"><button class="solid" id="done">I'm done</button><button id="unpick">← Pick something else</button></div>`;
+    $('#done').onclick = finish; $('#unpick').onclick = unpick;
   } else if (phase === 'rate') {
     card.innerHTML = `<p class="tag">How was it?</p><p class="activity">${esc(slot.activity)}</p>
       <div class="row">
         <button class="good" data-r="well">Time well spent</button>
         <button class="warn" data-r="meh">Meh</button>
         <button class="bad" data-r="wasted">Wasted</button>
-      </div>`;
+      </div>
+      <p class="meta"><button type="button" class="link" id="unfinish">← Not done yet</button></p>`;
+    $('#unfinish').onclick = unfinish;
     card.querySelectorAll('[data-r]').forEach((b) => (b.onclick = () => rate(b.dataset.r)));
   }
   // Re-rendering destroys the focused button; put focus on the new first button
