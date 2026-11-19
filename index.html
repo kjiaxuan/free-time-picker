@@ -10,7 +10,11 @@
     <main class="wrap">
       <header>
         <h1>Free Time Picker</h1>
-        <p class="sub">Bored? Get one free game to try. Then say if it was time well spent.</p>
+        <p class="sub">Bored? Get one thing to try. Then say if it was time well spent.</p>
+        <div class="toggle" id="mode" role="group" aria-label="Suggestion type">
+          <button type="button" data-mode="games" aria-pressed="true">Games</button>
+          <button type="button" data-mode="activities" aria-pressed="false">Activities</button>
+        </div>
       </header>
 
       <section class="card" id="card" aria-live="polite"></section>
@@ -30,7 +34,7 @@
 
       <footer>
         <button type="button" class="link" id="clear">Clear my history</button>
-        <span>Data stays in this browser. Games from FreeToGame.</span>
+        <span>Data stays in this browser. Games from FreeToGame, activities from the Bored API.</span>
       </footer>
     </main>
     <script type="module" src="/src/main.js"></script>

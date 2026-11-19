@@ -45,21 +45,61 @@ function safeLink(url) {
 }
 
 // ---- API ----
-// FreeToGame returns the whole catalogue of free browser games (~70) in one call,
-// so we fetch it once and pick randomly on the client.
-const API = 'https://www.freetogame.com/api/games?platform=browser';
+// Two sources, switchable with the toggle:
+// - games: FreeToGame (~70 free browser games in one call, fetched once, picked at random).
+// - activities: Bored API (general things to do). It sends no CORS headers, so it is only
+//   reachable through the Vite dev-server proxy (/api) and is disabled in the production build.
+const MODE_KEY = 'ftp.mode.v1';
+const ACTIVITIES_AVAILABLE = import.meta.env.DEV;
+const GAMES_API = 'https://www.freetogame.com/api/games?platform=browser';
 let games = null;
 
+function loadMode() {
+  try {
+    const m = localStorage.getItem(MODE_KEY);
+    if (m === 'activities' && ACTIVITIES_AVAILABLE) return 'activities';
+  } catch { /* ignore */ }
+  return 'games';
+}
+let mode = loadMode();
+
+async function getJson(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(res.status === 429 ? 'Too many requests, wait a minute.' : `API error ${res.status}`);
+  return res.json();
+}
+
 async function fetchSuggestion() {
-  if (!games) {
-    const res = await fetch(API);
-    if (!res.ok) throw new Error(res.status === 429 ? 'Too many requests, wait a minute.' : `API error ${res.status}`);
-    games = await res.json();
+  if (mode === 'activities') {
+    const a = await getJson('/api/random');
+    const who = a.participants > 1 ? `${a.participants} people` : 'solo';
+    return { activity: a.activity, type: a.type, description: '', link: a.link, meta: [a.type, a.duration, who] };
   }
+  if (!games) games = await getJson(GAMES_API);
   if (!Array.isArray(games) || !games.length) { games = null; throw new Error('No games came back from the API.'); }
   const g = games[Math.floor(Math.random() * games.length)];
-  return { activity: g.title, type: g.genre, description: g.short_description, link: g.game_url };
+  return { activity: g.title, type: g.genre, description: g.short_description, link: g.game_url, meta: [g.genre, 'free browser game'] };
 }
+
+function setMode(m) {
+  if (m === mode || (m === 'activities' && !ACTIVITIES_AVAILABLE)) return;
+  mode = m;
+  try { localStorage.setItem(MODE_KEY, m); } catch { /* ignore */ }
+  suggestion = null; // so the dedupe check does not compare across sources
+  if (phase === 'suggest' || phase === 'error') next();
+  else renderMode();
+}
+
+function renderMode() {
+  const locked = phase === 'loading' || phase === 'doing' || phase === 'rate';
+  document.querySelectorAll('#mode button').forEach((b) => {
+    const m = b.dataset.mode;
+    b.setAttribute('aria-pressed', String(m === mode));
+    b.disabled = locked || (m === 'activities' && !ACTIVITIES_AVAILABLE);
+    if (m === 'activities' && !ACTIVITIES_AVAILABLE) b.title = 'Only available when running locally (npm run dev)';
+  });
+}
+document.querySelectorAll('#mode button').forEach((b) => (b.onclick = () => setMode(b.dataset.mode)));
 
 async function next() {
   if (phase === 'loading') return; // ignore overlapping requests
@@ -74,7 +114,7 @@ async function next() {
     phase = 'suggest';
   } catch (e) {
     phase = 'error';
-    suggestion = { error: e.message || 'Could not reach the Bored API.' };
+    suggestion = { error: e.message || 'Could not reach the API.' };
   }
   render();
 }
@@ -84,6 +124,7 @@ function doIt() {
   slot.pickedAt = Date.now();
   slot.activity = suggestion.activity;
   slot.type = suggestion.type;
+  slot.source = mode;
   saveCurrent();
   phase = 'doing'; render();
 }
@@ -112,10 +153,11 @@ function render() {
       <div class="row"><button class="solid" id="retry">Try again</button></div>`;
     $('#retry').onclick = next;
   } else if (phase === 'suggest') {
-    const bits = [suggestion.type, 'free browser game'];
+    const bits = suggestion.meta || [suggestion.type];
+    const linkLabel = mode === 'games' ? 'play' : 'link';
     card.innerHTML = `<p class="tag">Try this</p><p class="activity">${esc(suggestion.activity)}</p>
-      <p>${esc(suggestion.description || '')}</p>
-      <p class="meta">${esc(bits.filter(Boolean).join(' · '))}${safeLink(suggestion.link) ? ` · <a href="${esc(safeLink(suggestion.link))}" target="_blank" rel="noopener noreferrer">play</a>` : ''}</p>
+      ${suggestion.description ? `<p>${esc(suggestion.description)}</p>` : ''}
+      <p class="meta">${esc(bits.filter(Boolean).join(' · '))}${safeLink(suggestion.link) ? ` · <a href="${esc(safeLink(suggestion.link))}" target="_blank" rel="noopener noreferrer">${linkLabel}</a>` : ''}</p>
       <div class="row"><button class="solid" id="do">Do it</button><button id="another">Another</button></div>`;
     $('#do').onclick = doIt; $('#another').onclick = next;
   } else if (phase === 'doing') {
@@ -134,6 +176,7 @@ function render() {
   // Re-rendering destroys the focused button; put focus on the new first button
   // (but don't steal focus on the very first page load).
   if (phase !== 'idle') interacted = true;
+  renderMode();
   const first = card.querySelector('button');
   if (interacted && first) first.focus();
 }
